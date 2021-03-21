@@ -1,0 +1,6 @@
+host: '127.0.0.1'
+port: 8250
+serverName: ''
+authKey: ''
+heartbeat: 3
+debug: true

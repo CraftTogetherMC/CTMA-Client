@@ -1,0 +1,8 @@
+name: CTMA-Client
+version: ${project.version}
+main: de.crafttogether.ctmaclient.CTMAClientPlugin
+api-version: 1.16
+authors: [ J0schlZ ]
+description: Bridge to CTMyAdmin
+softdepend:
+  - ViewDistanceTweaks
