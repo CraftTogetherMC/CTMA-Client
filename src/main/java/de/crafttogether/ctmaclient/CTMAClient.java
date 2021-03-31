@@ -24,12 +24,16 @@ public class CTMAClient implements Runnable {
     private String authKey;
     private String host;
     private int port;
+    private int sendInterval;
     private int heartbeat;
     private int connectionAttempts;
     private boolean shutdown;
     private boolean isConnected;
     private boolean isRegistered;
     private boolean isReconnecting;
+
+    private JSONObject serverInfo;
+    private long lastHeartBeat;
 
     private boolean debug;
 
@@ -41,6 +45,8 @@ public class CTMAClient implements Runnable {
         client = this;
 
         this.plugin = CTMAClientPlugin.getInstance();
+        this.serverInfo = new JSONObject();
+        this.lastHeartBeat = 0;
 
         this.clientName = clientName;
         this.authKey = authKey;
@@ -54,6 +60,7 @@ public class CTMAClient implements Runnable {
         this.isReconnecting = false;
 
         this.heartbeat = plugin.getConfig().getInt("heartbeat");
+        this.sendInterval = plugin.getConfig().getInt("sendInterval");
         this.debug = plugin.getConfig().getBoolean("debug");
     }
 
@@ -136,93 +143,94 @@ public class CTMAClient implements Runnable {
         closeConnection(true);
     }
 
-    // TODO: Das ist schon echt dumm... Das geht besser!
     private void onReady() {
         if (this.isRegistered)
             return;
         else
             isRegistered = true;
 
-        // Schedule Heartbeat on Main-Thread
         plugin.getServer().getScheduler().runTaskTimer(plugin, () -> {
-            final long timestamp = System.currentTimeMillis() / 1000L;
+            this.lastHeartBeat = System.currentTimeMillis() / 1000L;
+        }, 0L, 20L * heartbeat);
 
-            double tps = 0, mspt = 0;
-            JSONObject worlds = null;
+        plugin.getServer().getScheduler().runTaskTimerAsynchronously(plugin, () -> {
+            // Get actual data
+            getServerInfo();
 
-            int globalChunkCount = 0;
-            int globalEntityCount = 0;
-            int globalTileEntityCount = 0;
-            int globalTickableTileEntityCount = 0;
-
-            int viewDistance = 0;
-            int noTickViewDistance = 0;
-
-            try {
-                ViewDistanceTweaks vdt = plugin.getVdt();
-                World defaultWorld = Bukkit.getWorlds().get(0);
-                worlds = new JSONObject();
-
-                if (vdt != null) {
-                    tps = vdt.getTaskManager().getTpsTracker().getTps();
-                    mspt = vdt.getTaskManager().getMsptTracker().getMspt();
-                    viewDistance = vdt.getHookManager().getViewDistanceHook().getViewDistance(defaultWorld);
-                    noTickViewDistance = vdt.getHookManager().getNoTickViewDistanceHook().getViewDistance(defaultWorld);
-                }
-                else {
-                    viewDistance = defaultWorld.getViewDistance();
-                    noTickViewDistance = defaultWorld.getNoTickViewDistance();
-                }
-
-                for (World world : Bukkit.getServer().getWorlds()) {
-                    JSONObject worldInfo = new JSONObject();
-
-                    globalChunkCount += world.getChunkCount();
-                    globalEntityCount += world.getEntityCount();
-                    globalTileEntityCount += world.getTileEntityCount();
-                    globalTickableTileEntityCount += world.getTickableTileEntityCount();
-
-                    worldInfo.put("environment", world.getEnvironment().name());
-                    worldInfo.put("chunks", world.getChunkCount());
-                    worldInfo.put("entities", world.getEntityCount());
-                    worldInfo.put("tileEntities", world.getTileEntityCount());
-                    worldInfo.put("tickableTileEntities", world.getTickableTileEntityCount());
-
-                    if (vdt != null) {
-                        worldInfo.put("viewDistance", vdt.getHookManager().getViewDistanceHook().getViewDistance(world));
-                        worldInfo.put("noTickViewDistance", vdt.getHookManager().getNoTickViewDistanceHook().getViewDistance(world));
-                    }
-                    else {
-                        worldInfo.put("viewDistance", world.getViewDistance());
-                        worldInfo.put("noTickViewDistance", world.getNoTickViewDistance());
-                    }
-
-                    worlds.put(world.getName(), worldInfo);
-                }
-            }
-            catch(Exception ex) {
-                plugin.getLogger().warning(ex.getMessage());
-            }
-
-            JSONObject serverInfo = new JSONObject();
-            serverInfo.put("tps", tps);
-            serverInfo.put("mspt", mspt);
-            serverInfo.put("players", Bukkit.getServer().getOnlinePlayers().size());
-            serverInfo.put("chunks", globalChunkCount);
-            serverInfo.put("entities", globalEntityCount);
-            serverInfo.put("tileEntities", globalTileEntityCount);
-            serverInfo.put("tickableTileEntities", globalTickableTileEntityCount);
-            serverInfo.put("viewDistance", viewDistance);
-            serverInfo.put("noTickViewDistance", noTickViewDistance);
-            serverInfo.put("worlds", worlds);
-
-            // Send data asynchronously
-            plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
-                emit("server-heartbeat", timestamp, serverInfo);
-            });
-        }, 40L, heartbeat * 20L);
+            // Send data
+            emit("server-heartbeat", lastHeartBeat, serverInfo);
+        }, 20L, 20L * sendInterval);
     }
 
+    private void getServerInfo() {
+        double tps = 0, mspt = 0;
+        JSONObject worlds = null;
+
+        int globalChunkCount = 0;
+        int globalEntityCount = 0;
+        int globalTileEntityCount = 0;
+        int globalTickableTileEntityCount = 0;
+
+        int viewDistance = 0;
+        int noTickViewDistance = 0;
+
+        try {
+            ViewDistanceTweaks vdt = plugin.getVdt();
+            World defaultWorld = Bukkit.getWorlds().get(0);
+            worlds = new JSONObject();
+
+            if (vdt != null) {
+                tps = vdt.getTaskManager().getTpsTracker().getTps();
+                mspt = vdt.getTaskManager().getMsptTracker().getMspt();
+                viewDistance = vdt.getHookManager().getViewDistanceHook().getViewDistance(defaultWorld);
+                noTickViewDistance = vdt.getHookManager().getNoTickViewDistanceHook().getViewDistance(defaultWorld);
+            }
+            else {
+                viewDistance = defaultWorld.getViewDistance();
+                noTickViewDistance = defaultWorld.getNoTickViewDistance();
+            }
+
+            for (World world : Bukkit.getServer().getWorlds()) {
+                JSONObject worldInfo = new JSONObject();
+
+                globalChunkCount += world.getChunkCount();
+                globalEntityCount += world.getEntityCount();
+                globalTileEntityCount += world.getTileEntityCount();
+                globalTickableTileEntityCount += world.getTickableTileEntityCount();
+
+                worldInfo.put("environment", world.getEnvironment().name());
+                worldInfo.put("chunks", world.getChunkCount());
+                worldInfo.put("entities", world.getEntityCount());
+                worldInfo.put("tileEntities", world.getTileEntityCount());
+                worldInfo.put("tickableTileEntities", world.getTickableTileEntityCount());
+
+                if (vdt != null) {
+                    worldInfo.put("viewDistance", vdt.getHookManager().getViewDistanceHook().getViewDistance(world));
+                    worldInfo.put("noTickViewDistance", vdt.getHookManager().getNoTickViewDistanceHook().getViewDistance(world));
+                }
+                else {
+                    worldInfo.put("viewDistance", world.getViewDistance());
+                    worldInfo.put("noTickViewDistance", world.getNoTickViewDistance());
+                }
+
+                worlds.put(world.getName(), worldInfo);
+            }
+        }
+        catch(Exception ex) {
+            plugin.getLogger().warning(ex.getMessage());
+        }
+
+        serverInfo.put("tps", tps);
+        serverInfo.put("mspt", mspt);
+        serverInfo.put("players", Bukkit.getServer().getOnlinePlayers().size());
+        serverInfo.put("chunks", globalChunkCount);
+        serverInfo.put("entities", globalEntityCount);
+        serverInfo.put("tileEntities", globalTileEntityCount);
+        serverInfo.put("tickableTileEntities", globalTickableTileEntityCount);
+        serverInfo.put("viewDistance", viewDistance);
+        serverInfo.put("noTickViewDistance", noTickViewDistance);
+        serverInfo.put("worlds", worlds);
+    }
 
     public void connect() {
         if (!isReconnecting)
